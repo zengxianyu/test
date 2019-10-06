@@ -53,13 +53,24 @@ class MTFCN(nn.Module):
         dims = dims[::-1]
         self.cweight = nn.Sequential(
                 nn.Linear(dims[0], n_hidden), nn.ReLU(), 
-                nn.Linear(n_hidden, c_output), nn.Sigmoid())
+                nn.Linear(n_hidden, c_output-1), nn.Sigmoid())
         self.preds = nn.ModuleList([nn.Conv2d(d, c_output, kernel_size=1) for d in dims])
-        
+        self.upscales = nn.ModuleList([
+                nn.ConvTranspose2d(c_output, c_output, 4, 2, 1),
+                nn.ConvTranspose2d(c_output, c_output, 4, 2, 1),
+                nn.ConvTranspose2d(c_output, c_output, 16, 8, 4),
+                ])
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
                 m.weight.data.normal_(0.0, 0.01)
                 m.bias.data.fill_(0)
+            elif isinstance(m, nn.ConvTranspose2d):
+                assert m.kernel_size[0] == m.kernel_size[1]
+                initial_weight = get_upsampling_weight(
+                    m.in_channels, m.out_channels, m.kernel_size[0])
+                m.weight.data.copy_(initial_weight)
+
+
         self.feature = resnet50(pretrained=True)
         self.feature.feats = {}
         self.feature = proc_resnet(self.feature)
@@ -74,20 +85,27 @@ class MTFCN(nn.Module):
         x8, x16 = feats
 
         pred = self.preds[0](x32)
-        pred_cls0 = F.softmax(pred, 1).mean(3).mean(2)
-        pred = F.interpolate(pred, scale_factor=2, mode="bilinear")
+        pred_cls0 = pred.mean(3).mean(2)
+        pred = self.upscales[0](pred)
+        #pred = F.interpolate(pred, scale_factor=2, mode="bilinear")
 
         pred = self.preds[1](x16) + pred
-        pred = F.interpolate(pred, scale_factor=2, mode="bilinear")
+        pred = self.upscales[1](pred)
+        #pred = F.interpolate(pred, scale_factor=2, mode="bilinear")
 
         pred = self.preds[2](x8) + pred
-        pred = F.interpolate(pred, scale_factor=8, mode="bilinear")
-        pred = F.softmax(pred, 1)
+        pred = self.upscales[2](pred)
+        #pred = F.interpolate(pred, scale_factor=8, mode="bilinear")
         pred_cls = pred.mean(3).mean(2)
 
         cweight = self.cweight(
             x32.mean(3).mean(2))[..., None, None]
-        pred_sal = (pred*cweight)[:, 1:].sum(1, keepdim=True)
+        bs = x.size(0)
+        ones = torch.ones(bs).to(x.device)[..., None, None, None]
+        cweight = torch.cat((ones, cweight), 1)
+        pred_sal = pred*cweight
+        pred_sal = F.softmax(pred_sal, 1)
+        pred_sal = torch.cat((pred_sal[:, :1], pred_sal[:, 1:].sum(1, keepdim=True)), 1)
         return pred, pred_sal, pred_cls, pred_cls0
 
 

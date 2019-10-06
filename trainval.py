@@ -8,13 +8,13 @@ from datasets.voc import index2color
 from logger import Logger
 import pdb
 
-path_sal_image = "data/ECSSD/images"
-path_sal_ann = "data/ECSSD/masks"
+path_sal_image = "data/DUTS-TR/DUTS-TR-Image"
+path_sal_ann = "data/DUTS-TR/DUTS-TR-Mask"
 path_voc_image = "data/VOC12/VOCdevkit/VOC2012/JPEGImages"
 path_voc_ann = "data/VOC12/VOCdevkit/VOC2012/Annotations"
-bsize=6
-image_size =256 
-train_iters = 1000
+bsize=64
+image_size =128
+train_iters = 100000
 
 log_writer = Logger("logs", clear=True)
 
@@ -52,24 +52,22 @@ def train():
             train_iter_sal = iter(train_loader_sal)
             it_sal = 0
         image_sal, mask_sal = train_iter_sal.next()
-        mask_sal = mask_sal[:, None, ...]
         it_sal += 1
 
         optimizer.zero_grad()
 
         pred, _, pred_cls, pred_cls0 = net(image_voc.cuda())
-        #loss_voc = F.binary_cross_entropy(pred_cls, class_voc.cuda())
-        loss_voc = F.binary_cross_entropy(pred_cls0, class_voc.cuda())
+        loss_voc = F.binary_cross_entropy_with_logits(pred_cls[:, 1:], class_voc[:, 1:].cuda())
+        loss_voc += F.binary_cross_entropy_with_logits(pred_cls0[:, 1:], class_voc[:, 1:].cuda())
         loss_voc.backward()
 
-        _, pred_sal, _, _ = net(image_voc.cuda())
-        loss_sal = F.binary_cross_entropy(pred_sal, mask_sal.cuda())
+        _, pred_sal, _, _  = net(image_sal.cuda())
+        loss_sal = F.nll_loss(pred_sal, mask_sal.long().cuda())
         loss_sal.backward()
 
         optimizer.step()
 
-
-        if i % 20 == 0:
+        if i % 50 == 0:
             # visualize training samples
             _, pred_index = pred.detach().cpu().max(1)
             _b = pred_index.size(0)
@@ -82,13 +80,13 @@ def train():
             msk = torch.transpose(msk, 1, 2)
             log_writer.add_scalar("class loss", loss_voc.item(), i)
             log_writer.add_scalar("sal loss", loss_sal.item(), i)
-            log_writer.add_image('prediction', torchvision.utils.make_grid(msk / 255), i)
+            log_writer.add_image("voc image", torchvision.utils.make_grid(image_voc[:4]), i)
+            log_writer.add_image('prediction', torchvision.utils.make_grid(msk[:4] / 255), i)
 
-            #log_writer.add_image("saliency image", torchvision.utils.make_grid(image_sal), i)
-            #log_writer.add_image('saliency gt', 
-            #        torchvision.utils.make_grid(mask_sal.expand(-1, 3, -1,-1)).detach(), 
-            #        i)
-            log_writer.add_image("voc image", torchvision.utils.make_grid(image_voc), i)
+            log_writer.add_image("saliency image", torchvision.utils.make_grid(image_sal[:4]), i)
+            log_writer.add_image('saliency', 
+                    torchvision.utils.make_grid(pred_sal[:4, 1:].expand(-1, 3, -1,-1)).detach(), 
+                    i)
             log_writer.write_html()
 
 
