@@ -57,12 +57,13 @@ def train():
         optimizer.zero_grad()
 
         pred, _, pred_cls, pred_cls0 = net(image_voc.cuda())
-        loss_voc = F.binary_cross_entropy_with_logits(pred_cls[:, 1:], class_voc[:, 1:].cuda())
-        loss_voc += F.binary_cross_entropy_with_logits(pred_cls0[:, 1:], class_voc[:, 1:].cuda())
-        loss_voc.backward()
+        ##############
+        ##############
 
         _, pred_sal, _, _  = net(image_sal.cuda())
-        loss_sal = F.nll_loss(pred_sal, mask_sal.long().cuda())
+        ##############
+        ##############
+        
         loss_sal.backward()
 
         optimizer.step()
